@@ -61,6 +61,18 @@ app.get("/form", async (_, res) => {
   }
 });
 
+// Compatibilidad: ruta histórica para listado de suscriptores
+app.get("/subscribers", async (_, res) => {
+  try {
+    const query = `SELECT * FROM suscriptores;`;
+    const rows = await sql(query);
+    res.json(rows);
+  } catch (error) {
+    console.error("Error fetching components:", error);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
 // Ruta para registrar un nuevo suscriptor
 app.post("/register", async (req, res) => {
   try {
@@ -70,10 +82,10 @@ app.post("/register", async (req, res) => {
       return res.status(400).json({ error: "Nombre y email son requeridos" });
     }
 
-    const query = `INSERT INTO form_silee (nombre, correo, telefono, mensaje, origen, como_te_describes)  
-                     VALUES ($1, $2, $3, $4, $5, $6) RETURNING *;`;
+    const query = `INSERT INTO suscriptores (nombre, correo, telefono, mensaje, origen)  
+                     VALUES ($1, $2, $3, $4, $5) RETURNING *;`;
 
-    const values = [nombre, correo, telefono, mensaje, origen, origen];
+    const values = [nombre, correo, telefono, mensaje, origen];
     const result = await sql(query, values);
 
     // Llamar a la función de envío de correo
@@ -90,6 +102,7 @@ app.post("/register", async (req, res) => {
     res.status(500).json({ error: "Internal Server Error" });
   }
 });
+
 app.post("/register/form", async (req, res) => {
   try {
     const { nombre, correo, comoTeDescribes, mensaje } = req.body;
