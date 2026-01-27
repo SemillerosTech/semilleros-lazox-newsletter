@@ -27,7 +27,7 @@ const sendNotificationEmail = async (
   correo,
   telefono,
   mensaje,
-  origen
+  origen,
 ) => {
   const mailOptions = {
     from: process.env.EMAIL_USER,
@@ -49,10 +49,10 @@ app.get("/ping", async (_, res) => {
   res.json("👍");
 });
 
-// Ruta para obtener todos los suscriptores
-app.get("/subscribers", async (_, res) => {
+// Ruta para obtener todos los registros de formulario
+app.get("/form", async (_, res) => {
   try {
-    const query = `SELECT * FROM suscriptores;`;
+    const query = `SELECT * FROM form_silee;`;
     const rows = await sql(query);
     res.json(rows);
   } catch (error) {
@@ -70,10 +70,10 @@ app.post("/register", async (req, res) => {
       return res.status(400).json({ error: "Nombre y email son requeridos" });
     }
 
-    const query = `INSERT INTO suscriptores (nombre, correo, telefono, mensaje, origen)  
-                     VALUES ($1, $2, $3, $4, $5) RETURNING *;`;
+    const query = `INSERT INTO form_silee (nombre, correo, telefono, mensaje, origen, como_te_describes)  
+                     VALUES ($1, $2, $3, $4, $5, $6) RETURNING *;`;
 
-    const values = [nombre, correo, telefono, mensaje, origen];
+    const values = [nombre, correo, telefono, mensaje, origen, origen];
     const result = await sql(query, values);
 
     // Llamar a la función de envío de correo
@@ -82,6 +82,35 @@ app.post("/register", async (req, res) => {
     res.status(201).json(result);
   } catch (error) {
     console.error("Error inserting subscriber:", error);
+
+    if (error.code === "23505") {
+      return res.status(409).json({ error: "El correo ya está registrado" });
+    }
+
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+app.post("/register/form", async (req, res) => {
+  try {
+    const { nombre, correo, comoTeDescribes, mensaje } = req.body;
+
+    if (!nombre || !correo || !comoTeDescribes) {
+      return res.status(400).json({
+        error: "Nombre, correo y ¿Cómo te describes? son requeridos",
+      });
+    }
+
+    const query = `INSERT INTO form_silee (nombre, correo, telefono, mensaje, origen, como_te_describes)
+                     VALUES ($1, $2, $3, $4, $5, $6) RETURNING *;`;
+
+    const values = [nombre, correo, null, mensaje, null, comoTeDescribes];
+    const result = await sql(query, values);
+
+    await sendNotificationEmail(nombre, correo, null, mensaje, comoTeDescribes);
+
+    res.status(201).json(result);
+  } catch (error) {
+    console.error("Error inserting subscriber (form):", error);
 
     if (error.code === "23505") {
       return res.status(409).json({ error: "El correo ya está registrado" });
