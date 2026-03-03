@@ -95,17 +95,13 @@ app.post("/register", async (req, res) => {
   } catch (error) {
     console.error("Error inserting subscriber:", error);
 
-    if (error.code === "23505") {
-      return res.status(409).json({ error: "El correo ya está registrado" });
-    }
-
     res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
 app.post("/register/form", async (req, res) => {
   try {
-    const { nombre, correo, comoTeDescribes, mensaje } = req.body;
+    const { nombre, correo, comoTeDescribes, mensaje, origen } = req.body;
 
     if (!nombre || !correo || !comoTeDescribes) {
       return res.status(400).json({
@@ -114,21 +110,23 @@ app.post("/register/form", async (req, res) => {
     }
 
     const query = `INSERT INTO form_silee (nombre, correo, telefono, mensaje, origen, como_te_describes)
-                     VALUES ($1, $2, $3, $4, $5, $6) RETURNING *;`;
+                   VALUES ($1, $2, $3, $4, $5, $6) RETURNING *;`;
 
-    const values = [nombre, correo, null, mensaje, null, comoTeDescribes];
+    const values = [
+      nombre,
+      correo,
+      null,
+      mensaje,
+      origen ?? null,
+      comoTeDescribes,
+    ];
     const result = await sql(query, values);
 
-    await sendNotificationEmail(nombre, correo, null, mensaje, comoTeDescribes);
+    await sendNotificationEmail(nombre, correo, null, mensaje, origen ?? "");
 
     res.status(201).json(result);
   } catch (error) {
     console.error("Error inserting subscriber (form):", error);
-
-    if (error.code === "23505") {
-      return res.status(409).json({ error: "El correo ya está registrado" });
-    }
-
     res.status(500).json({ error: "Internal Server Error" });
   }
 });
