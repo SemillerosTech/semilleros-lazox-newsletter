@@ -12,6 +12,18 @@ app.use(cors());
 
 const sql = neon(`${process.env.DATABASE_URL}`);
 
+// Helper para resincronizar sequences cuando hay colisión de pkey
+const resyncSequence = async (table) => {
+  try {
+    await sql(
+      `SELECT setval(pg_get_serial_sequence('${table}','id'), (SELECT COALESCE(MAX(id),0) FROM ${table}))`,
+    );
+    console.log(`Sequence resynced for ${table}`);
+  } catch (e) {
+    console.error(`Failed to resync sequence for ${table}:`, e);
+  }
+};
+
 // Configuración de Nodemailer
 const transporter = nodemailer.createTransport({
   service: "gmail", // o el servicio que prefieras
@@ -82,11 +94,25 @@ app.post("/register", async (req, res) => {
       return res.status(400).json({ error: "Nombre y email son requeridos" });
     }
 
-    const query = `INSERT INTO suscriptores (nombre, correo, telefono, mensaje, origen)  
-                     VALUES ($1, $2, $3, $4, $5) RETURNING *;`;
-
-    const values = [nombre, correo, telefono, mensaje, origen];
-    const result = await sql(query, values);
+    let result;
+    try {
+      const query = `INSERT INTO suscriptores (nombre, correo, telefono, mensaje, origen)
+                       VALUES ($1, $2, $3, $4, $5) RETURNING *;`;
+      const values = [nombre, correo, telefono, mensaje, origen];
+      result = await sql(query, values);
+    } catch (dbError) {
+      // Auto-recovery para sequence desincronizada (pkey)
+      if (dbError.code === "23505" && dbError.constraint === "suscriptores_pkey") {
+        console.warn("Sequence desync detected on suscriptores, resyncing...");
+        await resyncSequence("suscriptores");
+        const query = `INSERT INTO suscriptores (nombre, correo, telefono, mensaje, origen)
+                         VALUES ($1, $2, $3, $4, $5) RETURNING *;`;
+        const values = [nombre, correo, telefono, mensaje, origen];
+        result = await sql(query, values);
+      } else {
+        throw dbError;
+      }
+    }
 
     // Llamar a la función de envío de correo
     await sendNotificationEmail(nombre, correo, telefono, mensaje, origen);
@@ -94,6 +120,13 @@ app.post("/register", async (req, res) => {
     res.status(201).json(result);
   } catch (error) {
     console.error("Error inserting subscriber:", error);
+
+    if (error.code === "23505" && error.constraint === "suscriptores_correo_key") {
+      return res.status(409).json({ error: "El correo ya está registrado" });
+    }
+    if (error.code === "23505" && error.constraint === "suscriptores_pkey") {
+      return res.status(500).json({ error: "Error de secuencia en BD, por favor reintente" });
+    }
 
     res.status(500).json({ error: "Internal Server Error" });
   }
@@ -109,29 +142,46 @@ app.post("/register/form", async (req, res) => {
       });
     }
 
-    const query = `INSERT INTO form_silee (nombre, correo, telefono, mensaje, origen, como_te_describes)
-                   VALUES ($1, $2, $3, $4, $5, $6) RETURNING *;`;
-
-    const values = [
-      nombre,
-      correo,
-      null,
-      mensaje,
-      origen ?? null,
-      comoTeDescribes,
-    ];
-    const result = await sql(query, values);
+    let result;
+    try {
+      const query = `INSERT INTO form_silee (nombre, correo, telefono, mensaje, origen, como_te_describes)
+                     VALUES ($1, $2, $3, $4, $5, $6) RETURNING *;`;
+      const values = [nombre, correo, null, mensaje, origen ?? null, comoTeDescribes];
+      result = await sql(query, values);
+    } catch (dbError) {
+      if (dbError.code === "23505" && dbError.constraint === "form_silee_pkey") {
+        console.warn("Sequence desync detected on form_silee, resyncing...");
+        await resyncSequence("form_silee");
+        const query = `INSERT INTO form_silee (nombre, correo, telefono, mensaje, origen, como_te_describes)
+                       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *;`;
+        const values = [nombre, correo, null, mensaje, origen ?? null, comoTeDescribes];
+        result = await sql(query, values);
+      } else {
+        throw dbError;
+      }
+    }
 
     await sendNotificationEmail(nombre, correo, null, mensaje, origen ?? "");
 
     res.status(201).json(result);
   } catch (error) {
     console.error("Error inserting subscriber (form):", error);
+    if (error.code === "23505" && error.constraint === "form_silee_pkey") {
+      return res.status(500).json({ error: "Error de secuencia en BD, por favor reintente" });
+    }
+    // Si en el futuro se agrega UNIQUE en correo para form_silee
+    if (error.code === "23505") {
+      return res.status(409).json({ error: "El correo ya está registrado" });
+    }
     res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
-// Iniciar servidor
-app.listen(PORT, () => {
-  console.log(`Listening to http://localhost:${PORT}`);
-});
+// Iniciar servidor (solo en local / no-serverless)
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`Listening to http://localhost:${PORT}`);
+  });
+}
+
+module.exports = app;
